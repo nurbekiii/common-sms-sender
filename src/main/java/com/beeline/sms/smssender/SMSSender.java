@@ -1,13 +1,12 @@
-package com.beeline.sms;
+package com.beeline.sms.smssender;
 
 import com.adenki.smpp.*;
 import com.adenki.smpp.message.SubmitSM;
 import com.adenki.smpp.message.tlv.Tag;
 import com.adenki.smpp.util.AutoResponder;
 import com.beeline.sms.enums.ReplaceStrategyEnum;
-import com.beeline.sms.formatter.BeelineFormatter;
-import com.beeline.sms.formatter.PhoneFormatter;
-import com.beeline.sms.formatter.TypeFormatter;
+import com.beeline.sms.model.OutSMS;
+import com.beeline.sms.smssender.validate.Allowance;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -22,12 +21,9 @@ import java.util.Queue;
 
 public class SMSSender {
 
-    private TypeFormatter beelineFormatter = BeelineFormatter.getInstance();
-    private TypeFormatter phoneFormatter = PhoneFormatter.getInstance();
-
     private static Logger logger = LogManager.getLogger(SMSSender.class);
 
-    private String SMSC_Address;
+    private String SMSC_address;
     private int SMSC_port;
 
     private String SMSC_login;
@@ -41,7 +37,7 @@ public class SMSSender {
     private final Queue<String> queue = new ArrayDeque<>();
 
     public SMSSender(String SMSC_Address, int SMSC_port, String SMSC_login, String SMSC_pwd, String[] sendersArr) {
-        this.SMSC_Address = SMSC_Address;
+        this.SMSC_address = SMSC_Address;
         this.SMSC_port = SMSC_port;
         this.SMSC_login = SMSC_login;
         this.SMSC_pwd = SMSC_pwd;
@@ -54,7 +50,7 @@ public class SMSSender {
 
     public void bind() {
         try {
-            session = new SessionImpl(SMSC_Address, SMSC_port);
+            session = new SessionImpl(SMSC_address, SMSC_port);
             //session.setVersion(SMPPVersion.VERSION_3_4);
 
             session.bind(
@@ -67,6 +63,7 @@ public class SMSSender {
             session.addObserver(new AutoResponder(true));
         } catch (Exception t) {
             logger.error(t);
+            t.printStackTrace();
         }
     }
 
@@ -87,55 +84,24 @@ public class SMSSender {
         }
     }
 
-
-    public boolean sendMessage(OutSMS sms) {
+    public boolean sendMessage(OutSMS sms, Allowance allowance) {
         try {
-            String dest = sms.destAddress;
-            String sender = sms.sender;
-            boolean isCyrillic = sms.isCyrillic;
+            String dest = sms.getDestAddress();
+            String sender = sms.getSender();
+            boolean isCyrillic = sms.isCyrillic();
 
-            ReplaceStrategyEnum strategy = sms.strategy;
-            String extSender = sms.extSender;
-            String alias = sms.productAlias;
+            String extSender = sms.getExtSender();
+            String alias = sms.getProductAlias();
 
-            String message = alias + ": " + sms.shortMessage;
-
-            boolean isSenderMsisdn = (phoneFormatter.isValid(sender));
-
-            boolean isMsisdn = (phoneFormatter.isValid(dest));
-            if (!isMsisdn)
-                return false;
-
-            dest = phoneFormatter.parse(dest);
-            boolean isDestBeeline = beelineFormatter.isValid(dest);
-
-            logger.info(dest + ": " + message);
+            String message = alias + ": " + sms.getShortMessage();
 
             SubmitSM sm = new SubmitSM();
             sm.setDestination(new Address(1, 1, dest));
-            Address address = null;
 
-            if (isDestBeeline) {
-                if (!isSenderMsisdn)
-                    address = new Address(5, 1, sender);
-                else
-                    address = new Address(1, 1, sender);
-            } else {
-                if (strategy != null) {
-                    if (ReplaceStrategyEnum.REPLACE_SENDER == strategy) {
-                        address = new Address(1, 0, lastSender);
-                        setLastSender();
-                    }
-                    if (ReplaceStrategyEnum.EXT_REPLACE_SENDER == strategy) {
-                        address = new Address(1, 0, extSender);
-                    }
-                } else {
-                    address = new Address(1, 0, lastSender);
-                    setLastSender();
-                }
-            }
-
+            Address address = getAddress(allowance, sender, extSender);
             sm.setSource(address);
+
+            logger.info(address.getAddress() + " -> " + dest + ": " + message);
 
             if (isCyrillic) {
                 sm.setDataCoding((byte) (0x08)); // UCS-2
@@ -144,13 +110,13 @@ public class SMSSender {
                 sm.setMessage(message.getBytes());
             }
 
-            if (sms.segmentCount > 1) {
-                sm.setTLV(Tag.SAR_SEGMENT_SEQNUM, sms.segmentNo);
-                sm.setTLV(Tag.SAR_TOTAL_SEGMENTS, sms.segmentCount);
-                sm.setTLV(Tag.SAR_MSG_REF_NUM, sms.uniqueID);
+            if (sms.getSegmentCount() > 1) {
+                sm.setTLV(Tag.SAR_SEGMENT_SEQNUM, sms.getSegmentNo());
+                sm.setTLV(Tag.SAR_TOTAL_SEGMENTS, sms.getSegmentCount());
+                sm.setTLV(Tag.SAR_MSG_REF_NUM, sms.getUniqueID());
                 //logger.info(sms.uniqueID + " : " + sms.segmentNo + ": " +  sms.segmentCount);
             }
-            sm.setSequenceNum(sms.uniqueID);
+            sm.setSequenceNum(sms.getUniqueID());
 
             if (session.getState() != SessionState.BOUND) {
                 rebind();
@@ -162,15 +128,43 @@ public class SMSSender {
             }
         } catch (Exception t) {
             logger.error(t);
+            t.printStackTrace();
         }
+
         return false;
+    }
+
+    private Address getAddress(Allowance allowance, String sender, String extSender) {
+        ReplaceStrategyEnum strategy = allowance.getStrategies().get(0);
+        Address address = null;
+        switch (allowance.getSender()) {
+            case Bee2Bee:
+                address = new Address(1, 1, sender);
+                break;
+            case Alphanum2Bee:
+                address = new Address(5, 1, sender);
+                break;
+
+            default:
+                if (ReplaceStrategyEnum.DEFAULT == strategy) {
+                    address = new Address(1, 0, sender);
+                }
+                if (ReplaceStrategyEnum.REPLACE_SENDER == strategy) {
+                    address = new Address(1, 0, lastSender);
+                    setLastSender();
+                }
+                if (ReplaceStrategyEnum.EXT_REPLACE_SENDER == strategy) {
+                    address = new Address(1, 0, extSender);
+                }
+        }
+        return address;
     }
 
     private void setLastSender() {
         lastSender = queue.poll();
-        for (String sndr : sendersArr) {
-            if (!queue.contains(sndr)) {
-                queue.add(sndr);
+        for (String sender : sendersArr) {
+            if (!queue.contains(sender)) {
+                queue.add(sender);
                 break;
             }
         }

@@ -14,7 +14,8 @@ public class PhoneFormatter implements TypeFormatter {
         return instance;
     }
 
-    private PhoneFormatter() {}
+    private PhoneFormatter() {
+    }
 
     @Override
     public boolean isValid(String text) {

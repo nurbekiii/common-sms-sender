@@ -11,7 +11,8 @@ public class NurFormatter implements TypeFormatter {
         return instance;
     }
 
-    private NurFormatter() {}
+    private NurFormatter() {
+    }
 
     @Override
     public boolean isValid(String text) {

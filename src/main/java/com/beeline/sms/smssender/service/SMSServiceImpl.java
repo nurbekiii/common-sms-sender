@@ -1,9 +1,9 @@
 package com.beeline.sms.smssender.service;
 
-import com.beeline.sms.OutSMS;
-import com.beeline.sms.SMSSender;
-import com.beeline.sms.SmsUtil;
-import com.beeline.sms.enums.ReplaceStrategyEnum;
+import com.beeline.sms.model.OutSMS;
+import com.beeline.sms.smssender.SMSSender;
+import com.beeline.sms.smssender.validate.Allowance;
+import com.beeline.sms.util.SmsUtil;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,9 +23,6 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class SMSServiceImpl implements SMSService {
     private static Logger logger = LogManager.getLogger(SMSServiceImpl.class);
-
-    @Value("${app.sms.sender}")
-    private String sender;
 
     @Value("${app.sms.sender2}")
     private String sender2;
@@ -48,7 +45,7 @@ public class SMSServiceImpl implements SMSService {
     private boolean isTestMode;
 
     @Value("${app.auth.users}")
-    private String appAuthUers;
+    private String appAuthUsers;
 
     private SMSSender smsSender;
 
@@ -64,16 +61,16 @@ public class SMSServiceImpl implements SMSService {
     }
 
     @Override
-    public boolean sendSms(String smstext, String msisdn, String smsender, ReplaceStrategyEnum strategy, String extSender, String alias) {
-        List<OutSMS> list = getSMSes(smstext, msisdn, smsender, strategy, extSender, alias);
+    public boolean sendSms(String smstext, String msisdn, String smsender, Allowance allowance, String extSender, String alias) {
+        List<OutSMS> list = getSMSes(smstext, msisdn, smsender, extSender, alias);
         boolean res = false;
         for (OutSMS sms : list) {
-            res = smsSender.sendMessage(sms);
+            res = smsSender.sendMessage(sms, allowance);
         }
         return res;
     }
 
-    private List<OutSMS> getSMSes(String smstext, String msisdn, String smsender, ReplaceStrategyEnum strategy, String extSender, String alias) {
+    private List<OutSMS> getSMSes(String smstext, String msisdn, String smsender, String extSender, String alias) {
         boolean isCyrillic = SmsUtil.isCyrillic(smstext);
         int maxLen = (isCyrillic ? SmsUtil.smsLengthCyrillic : SmsUtil.smsLengthLatin);
         int nums = (int) Math.ceil((double) smstext.length() / (double) maxLen);
@@ -85,14 +82,14 @@ public class SMSServiceImpl implements SMSService {
         for (int j = 0; j < nums; j++) {
             String textPart = smstext.substring(j * maxLen, ((j + 1) * maxLen < msgLen ? (j + 1) * maxLen : msgLen));
 
-            OutSMS outSMS = new OutSMS(msisdn, textPart, smsender, nums, (j + 1), uniqId, isCyrillic, strategy, extSender, alias);
+            OutSMS outSMS = new OutSMS(msisdn, textPart, smsender, nums, (j + 1), uniqId, isCyrillic, extSender, alias);
             list.add(outSMS);
         }
-        if (true) {
-            uniqId++;
-            if (uniqId > 100000000)
-                uniqId = 1;
-        }
+
+        uniqId++;
+        if (uniqId > 100000000)
+            uniqId = 1;
+
         return list;
     }
 
@@ -114,7 +111,7 @@ public class SMSServiceImpl implements SMSService {
     }
 
     @Override
-    public String getAppAuthUers() {
-        return appAuthUers;
+    public String getAppAuthUsers() {
+        return appAuthUsers;
     }
 }

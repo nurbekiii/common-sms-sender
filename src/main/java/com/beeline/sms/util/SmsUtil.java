@@ -1,4 +1,4 @@
-package com.beeline.sms;
+package com.beeline.sms.util;
 
 /**
  * @author NIsaev on 20.05.2019

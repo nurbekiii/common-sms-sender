@@ -84,4 +84,18 @@ public class SmsRequest {
     public void setExt_sender(String ext_sender) {
         this.ext_sender = ext_sender;
     }
+
+
+    @Override
+    public String toString() {
+        return "SmsRequest{" +
+                "login='" + login + '\'' +
+                ", password='" + password + '\'' +
+                ", msisdn='" + msisdn + '\'' +
+                ", sender='" + sender + '\'' +
+                ", text='" + text + '\'' +
+                ", ext_sender='" + ext_sender + '\'' +
+                ", strategy=" + strategy +
+                '}';
+    }
 }
