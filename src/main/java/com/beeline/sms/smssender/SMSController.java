@@ -18,12 +18,13 @@ import com.beeline.sms.util.SmsUtil;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.context.request.WebRequest;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -31,7 +32,9 @@ import java.util.List;
 /**
  * @author NIsaev on 17.05.2019
  */
+
 @RestController
+@EnableAutoConfiguration
 public class SMSController {
 
     private final String EMPTY_PARAMS_ERROR = "все параметры должны быть непустыми";
@@ -41,8 +44,9 @@ public class SMSController {
     private final String SENDER_FORMAT_ERROR_EX = "параметр sender или strategy указаны неверно";
     private final String EXT_SENDER_FORMAT_ERROR = "параметр ext_sender или strategy указаны неверно";
     private final String SENDER_NOT_BEE_ERROR = "параметр sender не Beeline отправитель";
-    private final String SMS_LENGTH_ERROR = "параметр text должен быть не более 126 символов в кириллице или 253 символов в латинице";
+    private final String SMS_LENGTH_ERROR = "параметр text должен быть не более 600 символов";
     private final String UNKNOWN_ERROR = "Произошла неизвестная ошибка при отправке СМС. Попробуйте еще раз";
+    private final String UNKNOWN_IO_ERROR = "Произошла неизвестная ошибка при отправке СМС. Попробуйте еще раз. ";
 
     private final String PLEASE_WAIT_OK = "Сообщение принято для отправки. Пожалуйста ожидайте";
 
@@ -50,6 +54,8 @@ public class SMSController {
 
     @Autowired
     private SMSService smsService;
+
+    private String firstBeeSender;
 
     private List<Auth> authList;
     private List<Allowance> allowances;
@@ -63,16 +69,22 @@ public class SMSController {
         authList = getAuths();
         //get allowance rules
         allowances = getAllowances();
+
+        firstBeeSender = smsService.getFirstBeeSender();
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<?> handleMyException(Exception ex, WebRequest request) {
+    public ResponseEntity<?> handleMyException(Exception ex) {
         logger.error("Exception {0}", ex);
         return getErrorResponse(ex.getMessage());
     }
 
     @RequestMapping(value = "/sms/send", method = RequestMethod.POST, consumes = MediaType.APPLICATION_JSON_UTF8_VALUE)
     public ResponseEntity<Response> sendSmsRequest(@RequestBody SmsRequest request) throws InvalidReceiverException, InvalidSenderException {
+        return handleRequest(request);
+    }
+
+    private ResponseEntity<Response> handleRequest(SmsRequest request) throws InvalidReceiverException, InvalidSenderException {
         logger.info("SmsRequest {}", request);
 
         String login = request.getLogin();
@@ -81,76 +93,118 @@ public class SMSController {
         String msisdn = request.getMsisdn();
         String sender = request.getSender();
         String text = request.getText();
+        //если ничего нет, использовать стратегию DEFAULT
         ReplaceStrategyEnum strategy = (request.getStrategy() != null ? request.getStrategy() : ReplaceStrategyEnum.DEFAULT);
         boolean wasStrategy = (request.getStrategy() != null);
         String ext_sender = request.getExt_sender();
 
-        if (msisdn == null || text == null || sender == null || login == null || password == null ||
-                msisdn.isEmpty() || text.isEmpty() || sender.isEmpty() || login.isEmpty() || password.isEmpty()) {
-            return getErrorResponse(EMPTY_PARAMS_ERROR);
+        //пустые основные параметры
+        if (msisdn == null || text == null || login == null || password == null ||
+                msisdn.isEmpty() || text.isEmpty() || login.isEmpty() || password.isEmpty()) {
+            return getErrorResponseNotAcceptable(EMPTY_PARAMS_ERROR); //"Not Acceptable"
         }
 
+        //логин пароль указаны верно?
         Auth curUser = new Auth(login, password);
         if (!authList.contains(curUser)) {
-            return getErrorResponse(AUTH_PARAMS_ERROR);
+            return getErrorResponseCode(AUTH_PARAMS_ERROR, 401); //Unauthorized
         }
 
+        //получатель СМС не валидный номер телефона
         boolean isMsisdn = (phoneFormatter.isValid(msisdn));
         if (!isMsisdn) {
-            return getErrorResponse(MSISDN_FORMAT_ERROR);
+            return getErrorResponseNotAcceptable(MSISDN_FORMAT_ERROR);
         }
 
+        //находим Alias для отправителя-продукта
+        Auth alternate = findAuth(curUser);
+        boolean addAliasToSmsText = true;
+        //////////////
+        if (beelineFormatter.isValid(msisdn)) {
+            if (sender != null && !sender.isEmpty()) {
+                if (sender.equalsIgnoreCase(alternate.getAlias())) {
+                    addAliasToSmsText = false;
+                }
+            } else {
+                sender = alternate.getAlias();
+                request.setSender(sender);
+                addAliasToSmsText = false;
+            }
+        } else {
+            if (!wasStrategy || sender == null || sender.isEmpty()) {
+                strategy = (request.getStrategy() != null ? request.getStrategy() : ReplaceStrategyEnum.REPLACE_SENDER);
+                sender = firstBeeSender;
+                request.setSender(sender);
+                request.setStrategy(strategy);
+            }
+        }
+        //////////////
+
+        //не Билайн получателю запрещается отправлять от Alphanumeric отправителя
         boolean isSenderMsisdn = (phoneFormatter.isValid(sender));
         if (!isSenderMsisdn && !beelineFormatter.isValid(msisdn)) {
-            return getErrorResponse(SENDER_MSISDN_FORMAT_ERROR);
+            return getErrorResponseNotAcceptable(SENDER_MSISDN_FORMAT_ERROR);
         }
 
+        //если стратегия замены номера указана, но получатель и отправитель-заменитель не Билайн номера одновременно
+        // (т.е отправка на MegaNur2MegaNur - не работает)
+        //но возможны ситуации MegaNur2Bee и Bee2MegaNur
         if (ext_sender != null && strategy == ReplaceStrategyEnum.EXT_REPLACE_SENDER) {
             if (!beelineFormatter.isValid(ext_sender) && !beelineFormatter.isValid(msisdn)) {
-                return getErrorResponse(EXT_SENDER_FORMAT_ERROR);
+                return getErrorResponseNotAcceptable(EXT_SENDER_FORMAT_ERROR);
             }
         }
 
+        //не найдено правило по номерам и стратегии
         boolean strategyFound = allowedParams(sender, msisdn, strategy);
         if (!strategyFound) {
-            return getErrorResponse(wasStrategy ? SENDER_FORMAT_ERROR_EX : SENDER_NOT_BEE_ERROR);
+            return getErrorResponseNotAcceptable(wasStrategy ? SENDER_FORMAT_ERROR_EX : SENDER_NOT_BEE_ERROR);
         }
 
         //стратегия подмены на параметр ext_sender
         if (strategy == ReplaceStrategyEnum.EXT_REPLACE_SENDER) {
             if (ext_sender == null || ext_sender.isEmpty()) {
-                return getErrorResponse(EXT_SENDER_FORMAT_ERROR);
+                return getErrorResponseNotAcceptable(EXT_SENDER_FORMAT_ERROR);
             }
 
+            //не найдено правило по номерам и стратегии
             boolean strategyFoundEx = allowedParams(ext_sender, msisdn, strategy);
             if (!strategyFoundEx) {
-                return getErrorResponse(EXT_SENDER_FORMAT_ERROR);
+                return getErrorResponseNotAcceptable(EXT_SENDER_FORMAT_ERROR);
             }
         }
 
-        boolean isCyrillic = SmsUtil.isCyrillic(text);
-        if ((isCyrillic && text.length() > SmsUtil.smsLengthCyrillic) || (!isCyrillic && text.length() > SmsUtil.smsLengthLatin)) {
-            return getErrorResponse(SMS_LENGTH_ERROR);
+        //текст СМС длиннее допустимого значения
+        if (text.length() > SmsUtil.smsLength) {
+            return getErrorResponseNotAcceptable(SMS_LENGTH_ERROR);
         }
+
+        //определение текущего правила
         SenderDetect detector = new SenderDetect();
         SenderEnum factSender = detector.getSender(sender, msisdn);
         if (factSender == null) {
-            return getErrorResponse(SENDER_MSISDN_FORMAT_ERROR);
+            return getErrorResponseNotAcceptable(SENDER_MSISDN_FORMAT_ERROR);
         }
+        //текущеее правило
         Allowance curAllowance = new Allowance(factSender, Arrays.asList(strategy));
 
-        Auth alternate = findAuth(curUser);
-        boolean res = smsService.sendSms(text, msisdn, sender, curAllowance, ext_sender, alternate.getAlias());
+        try {
+            boolean res = smsService.sendSms(request, curAllowance, alternate.getAlias(), addAliasToSmsText);
 
-        if (res) {
-            return getSuccessResponse(PLEASE_WAIT_OK);
+            if (res) {
+                //все ок
+                return getSuccessResponse(PLEASE_WAIT_OK);
+            }
+        } catch (IOException t) {
+            t.printStackTrace();
+            //неизвестная ошибка
+            return getErrorResponseCode(UNKNOWN_IO_ERROR + "\n\r" + t.getMessage(), 500); //"Internal Server Error"
         }
-
-        return getErrorResponse(UNKNOWN_ERROR);
+        //неизвестная ошибка
+        return getErrorResponseCode(UNKNOWN_ERROR, 500); //"Internal Server Error"
     }
 
     private List<Auth> getAuths() {
-
         String appAuthUers = smsService.getAppAuthUsers();
 
         List<Auth> list = new ArrayList<>();
@@ -193,13 +247,22 @@ public class SMSController {
         return false;
     }
 
-    private ResponseEntity<Response> getErrorResponse(String errorMessage) {
-        logger.error("Some error: {}", errorMessage);
-        return new ResponseEntity<>(new Response("ERROR", errorMessage), HttpStatus.valueOf(400));
-    }
-
     private ResponseEntity<Response> getSuccessResponse(String successMessage) {
         logger.info("Success message: {}", successMessage);
         return new ResponseEntity<>(new Response("SUCCESS", successMessage), HttpStatus.valueOf(202));
+    }
+
+    private ResponseEntity<Response> getErrorResponse(String errorMessage) {
+        logger.error("Bad request error: {}", errorMessage);
+        return new ResponseEntity<>(new Response("ERROR", errorMessage), HttpStatus.valueOf(400));
+    }
+
+    private ResponseEntity<Response> getErrorResponseCode(String errorMessage, int errorCode) {
+        logger.error("Bad request error: {}", errorMessage);
+        return new ResponseEntity<>(new Response("ERROR", errorMessage), HttpStatus.valueOf(errorCode));
+    }
+
+    private ResponseEntity<Response> getErrorResponseNotAcceptable(String errorMessage) {
+        return getErrorResponseCode(errorMessage, 406); //"Not Acceptable"
     }
 }

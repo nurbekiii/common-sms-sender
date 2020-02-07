@@ -4,12 +4,15 @@ import com.adenki.smpp.*;
 import com.adenki.smpp.message.SubmitSM;
 import com.adenki.smpp.message.tlv.Tag;
 import com.adenki.smpp.util.AutoResponder;
+import com.adenki.smpp.version.SMPPVersion;
 import com.beeline.sms.enums.ReplaceStrategyEnum;
 import com.beeline.sms.model.OutSMS;
 import com.beeline.sms.smssender.validate.Allowance;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.io.IOException;
+import java.net.SocketException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -51,10 +54,10 @@ public class SMSSender {
     public void bind() {
         try {
             session = new SessionImpl(SMSC_address, SMSC_port);
-            //session.setVersion(SMPPVersion.VERSION_3_4);
+            session.setVersion(SMPPVersion.VERSION_3_4);
 
             session.bind(
-                    SessionType.TRANSCEIVER,
+                    SessionType.TRANSMITTER,  //TRANSCEIVER
                     SMSC_login,
                     SMSC_pwd,
                     "CMT"
@@ -76,61 +79,66 @@ public class SMSSender {
         if (session != null) {
             try {
                 session.unbind();
-                session.closeLink();
+                if (this.session.getState() == SessionState.UNBOUND) {
+                    session.closeLink();
+                }
                 session = null;
             } catch (Exception t) {
                 logger.error(t);
+                t.printStackTrace();
             }
         }
     }
 
-    public boolean sendMessage(OutSMS sms, Allowance allowance) {
-        try {
-            String dest = sms.getDestAddress();
-            String sender = sms.getSender();
-            boolean isCyrillic = sms.isCyrillic();
+    public boolean sendMessage(OutSMS sms, Allowance allowance) throws IOException {
 
-            String extSender = sms.getExtSender();
-            String alias = sms.getProductAlias();
+        String dest = sms.getDestAddress();
+        String sender = sms.getSender();
+        boolean isCyrillic = sms.isCyrillic();
 
-            String message = alias + ": " + sms.getShortMessage();
+        String extSender = sms.getExtSender();
+        String alias = sms.getProductAlias();
 
-            SubmitSM sm = new SubmitSM();
-            sm.setDestination(new Address(1, 1, dest));
+        String message = (alias != null ? (alias + ": " + sms.getShortMessage()) : sms.getShortMessage());
 
-            Address address = getAddress(allowance, sender, extSender);
-            sm.setSource(address);
+        SubmitSM sm = new SubmitSM();
+        sm.setDestination(new Address(1, 1, dest));
 
-            logger.info(address.getAddress() + " -> " + dest + ": " + message);
+        Address address = getAddress(allowance, sender, extSender);
+        sm.setSource(address);
 
-            if (isCyrillic) {
-                sm.setDataCoding((byte) (0x08)); // UCS-2
-                sm.setMessage(message.getBytes("UTF-16"));
-            } else {
-                sm.setMessage(message.getBytes());
-            }
+        logger.info(address.getAddress() + " -> " + dest + ": " + message);
 
-            if (sms.getSegmentCount() > 1) {
-                sm.setTLV(Tag.SAR_SEGMENT_SEQNUM, sms.getSegmentNo());
-                sm.setTLV(Tag.SAR_TOTAL_SEGMENTS, sms.getSegmentCount());
-                sm.setTLV(Tag.SAR_MSG_REF_NUM, sms.getUniqueID());
-                //logger.info(sms.uniqueID + " : " + sms.segmentNo + ": " +  sms.segmentCount);
-            }
-            sm.setSequenceNum(sms.getUniqueID());
+        if (isCyrillic) {
+            sm.setDataCoding((byte) (0x08)); // UCS-2
+            sm.setMessage(message.getBytes("UTF-16"));
+        } else {
+            sm.setMessage(message.getBytes());
+        }
 
-            if (session.getState() != SessionState.BOUND) {
+        if (sms.getSegmentCount() > 1) {
+            sm.setTLV(Tag.SAR_SEGMENT_SEQNUM, sms.getSegmentNo());
+            sm.setTLV(Tag.SAR_TOTAL_SEGMENTS, sms.getSegmentCount());
+            sm.setTLV(Tag.SAR_MSG_REF_NUM, sms.getUniqueID());
+            //logger.info(sms.uniqueID + " : " + sms.segmentNo + ": " +  sms.segmentCount);
+        }
+        sm.setSequenceNum(sms.getId());
+
+        if (session.getState() != SessionState.BOUND) {
+            rebind();
+        }
+
+        if (session != null && session.getState() == SessionState.BOUND) {
+            try {
+                session.send(sm);
+                return true;
+            } catch (SocketException t) {
                 rebind();
-            }
 
-            if (session != null && session.getState() == SessionState.BOUND) {
                 session.send(sm);
                 return true;
             }
-        } catch (Exception t) {
-            logger.error(t);
-            t.printStackTrace();
         }
-
         return false;
     }
 

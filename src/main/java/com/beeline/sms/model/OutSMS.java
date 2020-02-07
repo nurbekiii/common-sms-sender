@@ -5,6 +5,7 @@ package com.beeline.sms.model;
  */
 public class OutSMS {
 
+    private Long id;
     private String destAddress;
     private String shortMessage;
     private String sender;
@@ -17,8 +18,9 @@ public class OutSMS {
     private String productAlias;
 
 
-    public OutSMS(String destAddress, String shortMessage, String sender, int segmentCount, int segmentNo, long uniqueID, boolean isCyrillic,
+    public OutSMS(Long id, String destAddress, String shortMessage, String sender, int segmentCount, int segmentNo, long uniqueID, boolean isCyrillic,
                   String extSender, String productAlias) {
+        this.id = id;
         this.destAddress = destAddress;
         this.shortMessage = shortMessage;
         this.sender = sender;
@@ -30,6 +32,14 @@ public class OutSMS {
 
         this.extSender = extSender;
         this.productAlias = productAlias;
+    }
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
     }
 
     public String getDestAddress() {

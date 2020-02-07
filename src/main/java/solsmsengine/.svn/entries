@@ -1,0 +1,28 @@
+10
+
+dir
+0
+https://btc-srv-mweb-in.megacom.local:8082/svn/tartelette/SolUssdEngine/src/solsmsengine
+https://btc-srv-mweb-in.megacom.local:8082/svn/tartelette
+add
+
+
+
+
+
+
+
+svn:special svn:externals svn:needs-lock
+
+
+
+
+
+
+
+
+
+
+
+d6b2730e-d633-5e4f-b5d6-b004a2eb1152
+

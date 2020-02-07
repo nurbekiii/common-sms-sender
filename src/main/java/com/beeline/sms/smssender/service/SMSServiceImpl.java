@@ -1,7 +1,8 @@
 package com.beeline.sms.smssender.service;
 
 import com.beeline.sms.model.OutSMS;
-import com.beeline.sms.smssender.SMSSender;
+import com.beeline.sms.model.SmsRequest;
+import com.beeline.sms.smssender.SMSSenderSol;
 import com.beeline.sms.smssender.validate.Allowance;
 import com.beeline.sms.util.SmsUtil;
 import org.apache.logging.log4j.LogManager;
@@ -10,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -41,13 +43,10 @@ public class SMSServiceImpl implements SMSService {
     @Value("${app.sms.smsc_port}")
     private int smscPort;
 
-    @Value("${app.sms.is_test_mode}")
-    private boolean isTestMode;
-
     @Value("${app.auth.users}")
     private String appAuthUsers;
 
-    private SMSSender smsSender;
+    private SMSSenderSol smsSender;
 
     private long uniqId = 1;
 
@@ -55,44 +54,21 @@ public class SMSServiceImpl implements SMSService {
     public void init() {
         sendersArr = sender2.split(",");
 
-        smsSender = new SMSSender(smscHost, smscPort, smscUser, smscPass, sendersArr);
+        smsSender = new SMSSenderSol(smscHost, smscPort, smscUser, smscPass, sendersArr);
 
         reconnectToSMSC();
     }
 
     @Override
-    public boolean sendSms(String smstext, String msisdn, String smsender, Allowance allowance, String extSender, String alias) {
-        List<OutSMS> list = getSMSes(smstext, msisdn, smsender, extSender, alias);
-        boolean res = false;
-        for (OutSMS sms : list) {
-            res = smsSender.sendMessage(sms, allowance);
-        }
-        return res;
+    public String getAppAuthUsers() {
+        //логины пароли для авторизации
+        return appAuthUsers;
     }
 
-    private List<OutSMS> getSMSes(String smstext, String msisdn, String smsender, String extSender, String alias) {
-        boolean isCyrillic = SmsUtil.isCyrillic(smstext);
-        int maxLen = (isCyrillic ? SmsUtil.smsLengthCyrillic : SmsUtil.smsLengthLatin);
-        int nums = (int) Math.ceil((double) smstext.length() / (double) maxLen);
-
-        int msgLen = smstext.length();
-
-        List<OutSMS> list = new LinkedList<>();
-
-        for (int j = 0; j < nums; j++) {
-            String textPart = smstext.substring(j * maxLen, ((j + 1) * maxLen < msgLen ? (j + 1) * maxLen : msgLen));
-
-            OutSMS outSMS = new OutSMS(msisdn, textPart, smsender, nums, (j + 1), uniqId, isCyrillic, extSender, alias);
-            list.add(outSMS);
-        }
-
-        uniqId++;
-        if (uniqId > 100000000)
-            uniqId = 1;
-
-        return list;
+    @Override
+    public String getFirstBeeSender() {
+        return sendersArr[0];
     }
-
 
     private void reconnectToSMSC() {
         try {
@@ -111,7 +87,60 @@ public class SMSServiceImpl implements SMSService {
     }
 
     @Override
-    public String getAppAuthUsers() {
-        return appAuthUsers;
+    public boolean sendSms(SmsRequest request, Allowance allowance, String alias, boolean addAliasToSmsText) throws IOException {
+        //разделение текста на куски СМС
+        List<OutSMS> list = getSMSesEx(request, alias, addAliasToSmsText);
+        boolean res = false;
+        for (OutSMS sms : list) {
+            res = smsSender.sendMessage(sms, allowance);
+        }
+        return res;
+    }
+
+    private List<OutSMS> getSMSesEx(SmsRequest request, String alias, boolean addAliasToSmsText) {
+        String smstext = request.getText();
+        String msisdn = request.getMsisdn();
+        String smsender = request.getSender();
+        String extSender = request.getExt_sender();
+
+        boolean isCyrillic = SmsUtil.isCyrillic(smstext);
+        List<OutSMS> list = new LinkedList<>();
+
+        OutSMS outSMS = new OutSMS(uniqId, msisdn, smstext, smsender, 1, 1, uniqId, isCyrillic, extSender, (addAliasToSmsText ? alias : null));
+        list.add(outSMS);
+
+        uniqId++;
+        if (uniqId > 100000000)
+            uniqId = 1;
+
+        return list;
+    }
+
+    private List<OutSMS> getSMSes(SmsRequest request, String alias, boolean addAliasToSmsText) {
+        String smstext = request.getText();
+        String msisdn = request.getMsisdn();
+        String smsender = request.getSender();
+        String extSender = request.getExt_sender();
+
+        boolean isCyrillic = SmsUtil.isCyrillic(smstext);
+        int maxLen = SmsUtil.smsLength;
+        int nums = (int) Math.ceil((double) smstext.length() / (double) maxLen);
+
+        int msgLen = smstext.length();
+
+        List<OutSMS> list = new LinkedList<>();
+
+        for (int j = 0; j < nums; j++) {
+            String textPart = smstext.substring(j * maxLen, ((j + 1) * maxLen < msgLen ? (j + 1) * maxLen : msgLen));
+
+            OutSMS outSMS = new OutSMS((uniqId + j), msisdn, textPart, smsender, nums, (j + 1), uniqId, isCyrillic, extSender, (addAliasToSmsText ? alias : null));
+            list.add(outSMS);
+        }
+
+        uniqId++;
+        if (uniqId > 100000000)
+            uniqId = 1;
+
+        return list;
     }
 }

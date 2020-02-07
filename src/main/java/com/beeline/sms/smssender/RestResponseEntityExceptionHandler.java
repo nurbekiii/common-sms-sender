@@ -22,8 +22,4 @@ public class RestResponseEntityExceptionHandler extends ResponseEntityExceptionH
         logger.error("RuntimeException {0}", ex);
         return new ResponseEntity<>(new Response("ERROR", ex.toString()), HttpStatus.valueOf(400));
     }
-
-    private ResponseEntity<Response> getErrorResponseEx(String errorMessage) {
-        return new ResponseEntity<>(new Response("ERROR", errorMessage), HttpStatus.valueOf(400));
-    }
 }

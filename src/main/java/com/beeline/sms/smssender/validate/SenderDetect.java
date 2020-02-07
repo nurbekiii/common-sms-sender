@@ -23,7 +23,7 @@ public class SenderDetect implements Checkable {
         if (sender == null || sender.isEmpty())
             throw new InvalidSenderException("Указано неправильное значение параметра sender");
 
-        if (!phoneFormatter.isValid(msisdn) || msisdn == null || msisdn.isEmpty())
+        if (msisdn == null || msisdn.isEmpty() || !phoneFormatter.isValid(msisdn))
             throw new InvalidReceiverException("Указано неправильное значение параметра msisdn");
 
         if (beelineFormatter.isValid(sender) && beelineFormatter.isValid(msisdn))
@@ -38,10 +38,10 @@ public class SenderDetect implements Checkable {
         if (phoneFormatter.isValid(msisdn) && (megaFormatter.isValid(sender) || nurFormatter.isValid(sender)))
             return SenderEnum.MegaNur2MegaNur;
 
-        if (beelineFormatter.isValid(msisdn) && (!megaFormatter.isValid(sender) && !nurFormatter.isValid(sender)))
+        if (beelineFormatter.isValid(msisdn) && (!phoneFormatter.isValid(sender) && !megaFormatter.isValid(sender) && !nurFormatter.isValid(sender)))
             return SenderEnum.Alphanum2Bee;
 
-        if (!beelineFormatter.isValid(sender) && (megaFormatter.isValid(msisdn) || nurFormatter.isValid(msisdn)))
+        if (!phoneFormatter.isValid(sender) && (megaFormatter.isValid(msisdn) || nurFormatter.isValid(msisdn)))
             return SenderEnum.Alphanum2MegaNur;
 
         return null;

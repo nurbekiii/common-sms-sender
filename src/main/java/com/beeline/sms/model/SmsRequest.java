@@ -85,17 +85,18 @@ public class SmsRequest {
         this.ext_sender = ext_sender;
     }
 
-
     @Override
     public String toString() {
-        return "SmsRequest{" +
-                "login='" + login + '\'' +
-                ", password='" + password + '\'' +
-                ", msisdn='" + msisdn + '\'' +
-                ", sender='" + sender + '\'' +
-                ", text='" + text + '\'' +
-                ", ext_sender='" + ext_sender + '\'' +
-                ", strategy=" + strategy +
-                '}';
+        return "{" +
+                "\"login\":\"" + login + '\"' +
+                ", \"password\":\"" + password + '\"' +
+                ", \"msisdn\":\"" + msisdn + '\"' +
+                ", \"sender\":\"" + sender + '\"' +
+                ", \"text\":\"" + text + '\"' +
+                ", \"strategy\":\"" + strategy + '\"' +
+                ", \"ext_sender\":\"" + ext_sender + '\"' +
+                "}";
     }
+
+
 }
